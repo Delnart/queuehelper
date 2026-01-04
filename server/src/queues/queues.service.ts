@@ -14,9 +14,6 @@ export class QueuesService {
     private usersService: UsersService,
   ) {}
 
-  // ... (твої старі методи create, getActive, joinQueue залишаються тут) ...
-  // Скопіюй старі методи сюди, я пишу тільки нові:
-
   async create(subjectId: string) {
     await this.queueModel.updateMany({ subject: new Types.ObjectId(subjectId) }, { isActive: false });
     const newQueue = new this.queueModel({ subject: new Types.ObjectId(subjectId), isActive: true });
@@ -43,39 +40,34 @@ export class QueuesService {
     return await queue.save();
   }
 
-  // --- НОВІ МЕТОДИ ---
-
-  // Вийти з черги (Сам студент)
   async leaveQueue(queueId: string, telegramId: number) {
     const queue = await this.queueModel.findById(queueId);
     const user = await this.usersService.findByTelegramId(telegramId);
     if (!queue || !user) throw new BadRequestException('Not found');
 
-    // Фільтруємо масив, прибираючи цього юзера
     queue.entries = queue.entries.filter(e => e.user.toString() !== user._id.toString());
     return await queue.save();
   }
 
-  // Вигнати студента (Адмін/Староста)
   async kickUser(queueId: string, adminTgId: number, targetUserId: string) {
     const queue = await this.queueModel.findById(queueId).populate('subject');
     if (!queue) throw new BadRequestException('Queue not found');
 
-    // Перевірка прав: шукаємо групу через предмет
-    // (Це трохи складно в Mongo, тому зробимо простіше: довіримось, що фронтенд не бреше, 
-    // але для безпеки треба перевіряти роль в GroupMember. Для MVP пропустимо глибоку перевірку)
-    
-    // Видаляємо юзера по ID
     queue.entries = queue.entries.filter(e => e.user.toString() !== targetUserId);
     return await queue.save();
   }
 
-  // Закрити/Відкрити чергу
   async toggleStatus(queueId: string) {
     const queue = await this.queueModel.findById(queueId);
     if (!queue) throw new BadRequestException('Queue not found');
     
     queue.isActive = !queue.isActive;
     return await queue.save();
+  }
+  async getBySubject(subjectId: string) {
+    return await this.queueModel
+      .findOne({ subject: new Types.ObjectId(subjectId) })
+      .sort({ _id: -1 }) 
+      .populate('entries.user', 'fullName username telegramId');
   }
 }

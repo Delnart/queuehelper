@@ -20,7 +20,6 @@ export class QueuesController {
     return this.queuesService.joinQueue(body.queueId, body.telegramId, body.labNumber);
   }
 
-  // --- НОВІ ЕНДПОІНТИ ---
 
   @Post('leave')
   async leave(@Body() body: { queueId: string; telegramId: number }) {
@@ -35,5 +34,9 @@ export class QueuesController {
   @Post('toggle')
   async toggle(@Body() body: { queueId: string }) {
     return this.queuesService.toggleStatus(body.queueId);
+  }
+  @Get('subject/:subjectId')
+  async getBySubject(@Param('subjectId') subjectId: string) {
+    return this.queuesService.getBySubject(subjectId);
   }
 }

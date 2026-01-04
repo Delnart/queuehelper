@@ -5,6 +5,7 @@ import api from './api';
 import { Loader2 } from 'lucide-react';
 import SubjectList from './pages/SubjectList';
 import QueueView from './pages/QueueView';
+import GroupView from './pages/GroupView';
 
 interface TgUser {
   id: number;
@@ -85,6 +86,7 @@ function App() {
       <Route path="/" element={<Home />} />
       <Route path="/group/:groupId" element={<SubjectList />} />
       <Route path="/queue/:subjectId" element={<QueueView />} />
+      <Route path="/group/:groupId/settings" element={<GroupView />} />
     </Routes>
   );
 }

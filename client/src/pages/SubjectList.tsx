@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { ArrowLeft, Plus, BookOpen } from 'lucide-react';
+import { Settings } from 'lucide-react';
 
 interface Subject {
   _id: string;
@@ -37,8 +38,10 @@ export default function SubjectList() {
           <ArrowLeft size={20} />
         </button>
         <h1 className="text-2xl font-bold">Предмети</h1>
+        <button onClick={() => navigate(`/group/${groupId}/settings`)} className="p-2 bg-white rounded-full text-gray-600">
+        <Settings size={24} />
+    </button>
       </div>
-
       <div className="grid gap-3">
         {subjects.map(sub => (
           <div 
