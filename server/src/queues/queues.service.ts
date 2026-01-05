@@ -1,10 +1,9 @@
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Queue, QueueDocument } from './queue.schema';
+import { Queue, QueueDocument, QueueStatus } from './queue.schema';
 import { UsersService } from '../users/users.service';
 import { Group, GroupDocument } from '../groups/group.schema';
-import { QueueStatus } from './queue.schema';
 
 @Injectable()
 export class QueuesService {
@@ -14,9 +13,58 @@ export class QueuesService {
     private usersService: UsersService,
   ) {}
 
+
+  private sortQueueEntries(queue: QueueDocument) {
+    if (!queue.entries || queue.entries.length === 0) return;
+
+    const activeEntries = queue.entries.filter(e => 
+      [QueueStatus.WAITING, QueueStatus.PREPARING, QueueStatus.DEFENDING].includes(e.status as QueueStatus)
+    );
+    
+    if (activeEntries.length === 0) return;
+
+    const minLab = Math.min(...activeEntries.map(e => e.labNumber));
+
+    const minLabStudents = activeEntries.filter(e => e.labNumber === minLab);
+    const shouldPrioritizeMin = (queue.config?.priorityMinLab ?? true) && minLabStudents.length <= 11;
+
+    queue.entries.sort((a, b) => {
+      const statusOrder: Record<string, number> = { 
+        [QueueStatus.DEFENDING]: 0, 
+        [QueueStatus.PREPARING]: 1, 
+        [QueueStatus.WAITING]: 2 
+      };
+      const statA = statusOrder[a.status] ?? 99;
+      const statB = statusOrder[b.status] ?? 99;
+      
+      if (statA !== statB) return statA - statB;
+
+      if (statA === 2 && shouldPrioritizeMin) {
+        const isPriorityA = a.labNumber === minLab && (a.attemptsUsed || 0) < 2;
+        const isPriorityB = b.labNumber === minLab && (b.attemptsUsed || 0) < 2;
+
+        if (isPriorityA && !isPriorityB) return -1; 
+        if (!isPriorityA && isPriorityB) return 1; 
+      }
+
+      const posA = a.position || 9999;
+      const posB = b.position || 9999;
+
+      if (posA !== posB) return posA - posB;
+      
+      return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+    });
+  }
+
+
   async create(subjectId: string) {
     await this.queueModel.updateMany({ subject: new Types.ObjectId(subjectId) }, { isActive: false });
-    const newQueue = new this.queueModel({ subject: new Types.ObjectId(subjectId), isActive: true, config: { maxSlots: 30 }});
+    
+    const newQueue = new this.queueModel({ 
+        subject: new Types.ObjectId(subjectId), 
+        isActive: true, 
+        config: { maxSlots: 35, minMaxRule: true, priorityMinLab: true }
+    });
     return await newQueue.save();
   }
 
@@ -29,11 +77,16 @@ export class QueuesService {
   async joinQueue(queueId: string, telegramId: number, labNumber: number, position?: number) {
     const queue = await this.queueModel.findById(queueId);
     if (!queue || !queue.isActive) throw new BadRequestException('Черга закрита');
+    
     const user = await this.usersService.findByTelegramId(telegramId);
     if (!user) throw new BadRequestException('User not found');
+    
+    // Перевірка чи юзер вже в черзі
     const exists = queue.entries.some(e => e.user.toString() === user._id.toString());
     if (exists) throw new BadRequestException('Ти вже в черзі!');
-    if (queue.config?.minMaxRule && queue.entries.length > 0) {
+
+    // Логіка Мін+2 (тільки якщо в черзі вже хтось є)
+    if (queue.config?.minMaxRule) {
       const activeEntries = queue.entries.filter(e => 
         [QueueStatus.WAITING, QueueStatus.PREPARING, QueueStatus.DEFENDING].includes(e.status as QueueStatus)
       );
@@ -47,17 +100,19 @@ export class QueuesService {
         }
       }
     }
+
+    // Додаємо користувача
     queue.entries.push({ 
         user: user._id, 
         labNumber, 
         joinedAt: new Date(),
         status: QueueStatus.WAITING,
-        position: position 
+        position: position,
+        attemptsUsed: 0
     } as any);
 
-    if (position) {
-        queue.entries.sort((a, b) => (a.position || 999) - (b.position || 999));
-    }
+    // Сортуємо чергу
+    this.sortQueueEntries(queue);
 
     return await queue.save();
   }
@@ -67,27 +122,42 @@ export class QueuesService {
     const user = await this.usersService.findByTelegramId(telegramId);
     if (!queue || !user) throw new BadRequestException('Not found');
 
+    // Видаляємо користувача
     queue.entries = queue.entries.filter(e => e.user.toString() !== user._id.toString());
+    
+    // Пересортовуємо (бо мін. лаба могла змінитись)
+    this.sortQueueEntries(queue);
+    
     return await queue.save();
   }
+
   async updateStatus(queueId: string, userId: string, newStatus: string) {
     const queue = await this.queueModel.findById(queueId);
-    
-    if (!queue) {
-        throw new BadRequestException('Queue not found');
-    }
+    if (!queue) throw new BadRequestException('Queue not found');
 
     const entry = queue.entries.find(e => e.user.toString() === userId);
     if (!entry) throw new BadRequestException('User not in queue');
 
+    // Якщо статус змінився на FAILED (не здав), збільшуємо лічильник спроб
+    if (newStatus === QueueStatus.FAILED && entry.status !== QueueStatus.FAILED) {
+        entry.attemptsUsed = (entry.attemptsUsed || 0) + 1;
+    }
+
     entry.status = newStatus;
+    
+    // Пересортовуємо, бо зміна статусу впливає на порядок (наприклад, Preparing піднімається вгору)
+    this.sortQueueEntries(queue);
+
     return await queue.save();
   }
+
   async kickUser(queueId: string, adminTgId: number, targetUserId: string) {
-    const queue = await this.queueModel.findById(queueId).populate('subject');
+    const queue = await this.queueModel.findById(queueId);
     if (!queue) throw new BadRequestException('Queue not found');
 
     queue.entries = queue.entries.filter(e => e.user.toString() !== targetUserId);
+    this.sortQueueEntries(queue);
+    
     return await queue.save();
   }
 
@@ -98,6 +168,7 @@ export class QueuesService {
     queue.isActive = !queue.isActive;
     return await queue.save();
   }
+
   async getBySubject(subjectId: string) {
     return await this.queueModel
       .findOne({ subject: new Types.ObjectId(subjectId) })

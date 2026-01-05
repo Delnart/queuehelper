@@ -9,6 +9,7 @@ export enum QueueStatus {
   DEFENDING = 'defending', // Здає
   COMPLETED = 'completed', // Здав
   SKIPPED = 'skipped',     // Пропустив/Відмовився
+  FAILED = 'failed'        // Не здав
 }
 
 @Schema({ _id: false })
@@ -25,8 +26,8 @@ export class QueueEntry {
   @Prop({ type: String, enum: QueueStatus, default: QueueStatus.WAITING })
   status: string;
 
-  @Prop({ default: 1 })
-  attempt: number;
+  @Prop({ default: 0 })
+  attemptsUsed: number; // Кількість використаних спроб
   
   @Prop()
   position?: number;
@@ -44,10 +45,10 @@ export class Queue {
   entries: QueueEntry[];
 
   @Prop({ type: Object, default: {
-    minMaxRule: true, 
-    priorityMove: true, 
-    maxAttempts: 2, 
-    maxSlots: 30,
+    maxSlots: 35,
+    minMaxRule: true,       // Правило Мін+2
+    priorityMinLab: true,   // Пріоритет для тих, хто здає мінімальну лабу
+    maxAttempts: 2          // Макс спроб для пріоритету
   }})
   config: any;
 }
