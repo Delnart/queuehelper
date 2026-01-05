@@ -16,8 +16,8 @@ export class QueuesController {
   }
 
   @Post('join')
-  async join(@Body() body: { queueId: string; telegramId: number; labNumber: number }) {
-    return this.queuesService.joinQueue(body.queueId, body.telegramId, body.labNumber);
+  async join(@Body() body: { queueId: string; telegramId: number; labNumber: number; position?: number }) {
+    return await this.queuesService.joinQueue(body.queueId, body.telegramId, body.labNumber, body.position);
   }
 
 

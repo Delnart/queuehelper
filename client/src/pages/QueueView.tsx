@@ -9,15 +9,23 @@ interface QueueEntry {
     _id: string;
     fullName: string;
     telegramId: number;
-  } | null; // Додаємо | null про всяк випадок
+  } | null;
   labNumber: number;
   joinedAt: string;
+  position?: number;
+  status?: string;
 }
 
 interface Queue {
   _id: string;
   isActive: boolean;
   entries: QueueEntry[];
+  config?: {
+    maxSlots: number;
+    minMaxRule: boolean;
+    priorityMove: boolean;
+    maxAttempts: number;
+  }
 }
 
 export default function QueueView() {
@@ -27,10 +35,10 @@ export default function QueueView() {
   const [loading, setLoading] = useState(true);
   const [labNum, setLabNum] = useState('');
   const [isJoining, setIsJoining] = useState(false);
-  
+  const MAX_SLOTS = 35;
+  const slots = Array.from({ length: MAX_SLOTS }, (_, i) => i + 1);
   const tgUser = WebApp.initDataUnsafe.user;
   
-  // ВИПРАВЛЕННЯ 1: Додано e.user?.telegramId (знак питання)
   const myEntry = queue?.entries?.find(e => e.user?.telegramId === tgUser?.id);
 
   const fetchQueue = async () => {
@@ -56,13 +64,26 @@ export default function QueueView() {
     return () => clearInterval(interval);
   }, [subjectId]);
 
-  const handleJoin = async () => {
-    if (!queue || !labNum || !tgUser) return;
-    try {
-        await api.post('/queues/join', { queueId: queue._id, telegramId: tgUser.id, labNumber: Number(labNum) });
-        setIsJoining(false); setLabNum(''); fetchQueue();
-    } catch (e: any) { alert(e.response?.data?.message || 'Помилка'); }
-  };
+    const handleJoin = async (slotNum?: number) => {
+        if (!queue || !tgUser) return;
+
+        const positionToTake = slotNum || 1; 
+        const labToTake = Number(prompt("Яку лабу здаємо? (Введіть номер)", "1"));
+
+        if (!labToTake) return;
+
+        try {
+            await api.post('/queues/join', { 
+                queueId: queue._id, 
+                telegramId: tgUser.id, 
+                labNumber: labToTake,
+                position: positionToTake 
+            });
+            fetchQueue();
+        } catch (e: any) { 
+            alert(e.response?.data?.message || 'Помилка'); 
+        }
+    };
 
   const handleLeave = async () => {
     if (!queue || !tgUser) return;
@@ -133,32 +154,59 @@ export default function QueueView() {
                   </button>
               </div>
           ) : (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                  {queue.entries?.map((entry, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-4 border-b last:border-0 hover:bg-gray-50">
-                          <div className="flex items-center gap-3">
-                              <span className="text-gray-400 font-medium w-6">{idx + 1}</span>
-                              <div>
-                                  {/* ВИПРАВЛЕННЯ 2: Безпечний вивід імені */}
-                                  <p className="font-bold text-gray-800">{entry.user?.fullName || 'Невідомий'}</p>
-                                  <span className="bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded">
-                                      Лаба {entry.labNumber}
-                                  </span>
-                              </div>
-                          </div>
-                          
-                          {/* ВИПРАВЛЕННЯ 3: Перевірка на існування user перед порівнянням ID */}
-                          {entry.user && entry.user.telegramId !== tgUser?.id && (
-                              <button 
-                                onClick={() => entry.user && handleKick(entry.user._id, entry.user.fullName)}
-                                className="text-gray-300 hover:text-red-500 p-2"
-                              >
-                                  <Trash2 size={18} />
-                              </button>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                <h3 className="mb-4 font-bold text-gray-700">Оберіть місце (всього 30):</h3>
+                      
+                <div className="grid grid-cols-4 gap-3">
+                    {Array.from({ length: queue.config?.maxSlots || 30 }, (_, i) => i + 1).map((slotNumber) => {
+                      const entry = queue.entries?.find(e => e.position === slotNumber);
+                      const isMyEntry = entry?.user?.telegramId === tgUser?.id;
+                    
+                      return (
+                        <div 
+                          key={slotNumber} 
+                          className={`
+                            relative p-2 rounded-lg border-2 text-center min-h-[80px] flex flex-col items-center justify-center transition-all
+                            ${entry 
+                              ? isMyEntry ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-100' 
+                              : 'border-dashed border-gray-300 hover:border-green-400 hover:bg-green-50 cursor-pointer'}
+                          `}
+                          onClick={() => !entry && handleJoin(slotNumber)}
+                        >
+                          <span className="absolute top-1 left-2 text-xs text-gray-400 font-bold">{slotNumber}</span>
+                            
+                          {entry ? (
+                            <>
+                              <span className="text-xs font-bold text-gray-800 break-all leading-tight">
+                                {entry.user?.fullName?.split(' ')[1] || 'Студент'}
+                              </span>
+                              <span className="text-[10px] text-gray-500 mt-1">Лаба {entry.labNumber}</span>
+
+                              {isMyEntry && (
+                                 <button onClick={(e) => { e.stopPropagation(); handleLeave(); }} className="text-red-500 mt-1 absolute bottom-1 right-1">
+                                   <XCircle size={14}/>
+                                 </button>
+                              )}
+
+                              {!isMyEntry && entry.user && (
+                                <button 
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if(entry.user) handleKick(entry.user._id, entry.user.fullName); 
+                                  }} 
+                                  className="text-gray-400 hover:text-red-600 absolute top-1 right-1"
+                                >
+                                   <Trash2 size={14} />
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-green-600 font-bold text-xl">+</span>
                           )}
-                      </div>
-                  ))}
-                  {queue.entries?.length === 0 && <div className="p-8 text-center text-gray-400">Пусто...</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
               </div>
           )}
        </div>
@@ -183,7 +231,7 @@ export default function QueueView() {
                           className="w-20 p-3 bg-gray-100 rounded-xl text-center font-bold outline-none focus:ring-2 focus:ring-blue-500"
                           value={labNum} onChange={e => setLabNum(e.target.value)} autoFocus
                        />
-                       <button onClick={handleJoin} className="flex-1 bg-green-600 text-white font-bold rounded-xl">OK</button>
+                       <button onClick={() => handleJoin()} className="flex-1 bg-green-600 text-white font-bold rounded-xl">OK</button>
                        <button onClick={() => setIsJoining(false)} className="p-3 bg-gray-200 rounded-xl">✕</button>
                    </div>
                ) : (
