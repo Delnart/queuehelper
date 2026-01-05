@@ -35,6 +35,10 @@ export class QueuesController {
   async toggle(@Body() body: { queueId: string }) {
     return this.queuesService.toggleStatus(body.queueId);
   }
+  @Patch('status')
+  async updateStatus(@Body() body: { queueId: string; userId: string; status: string }) {
+    return this.queuesService.updateStatus(body.queueId, body.userId, body.status);
+  }
   @Get('subject/:subjectId')
   async getBySubject(@Param('subjectId') subjectId: string) {
     return this.queuesService.getBySubject(subjectId);

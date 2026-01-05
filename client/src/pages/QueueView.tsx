@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import WebApp from '@twa-dev/sdk';
-import { ArrowLeft, RefreshCw, Trash2, Lock, Unlock, UserCheck, XCircle, Play, Clock } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2, Lock, Unlock, UserCheck, XCircle, Play, Clock, CheckCircle, AlertOctagon, SkipForward } from 'lucide-react';
 
 interface QueueEntry {
   user: {
@@ -37,11 +37,10 @@ export default function QueueView() {
   const [labNum, setLabNum] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   
-  // Змінюємо кількість слотів, якщо треба
+  const [selectedEntry, setSelectedEntry] = useState<QueueEntry | null>(null);
+
   const MAX_SLOTS = queue?.config?.maxSlots || 35;
-  
   const tgUser = WebApp.initDataUnsafe.user;
-  
   const myEntry = queue?.entries?.find(e => e.user?.telegramId === tgUser?.id);
 
   const fetchQueue = async () => {
@@ -70,13 +69,22 @@ export default function QueueView() {
       if (!queue || !tgUser) return;
 
       const positionToTake = slotNum || 1; 
-      // Якщо вводимо номер лаби через інпут знизу, беремо його, інакше питаємо (для кліку по картці)
       let labToTake = labNum ? Number(labNum) : 0;
       
+      if (labNum && labToTake < 1) {
+        alert("Номер лабораторної не може бути менше 1");
+        setLabNum('1');
+        return;
+      }
+
       if (!labToTake) {
           const promptVal = prompt("Яку лабу здаємо? (Введіть номер)", "1");
           if (!promptVal) return;
           labToTake = Number(promptVal);
+          if (labToTake < 1) {
+            alert("Номер має бути більше 0");
+            return;
+          }
       }
 
       try {
@@ -86,7 +94,7 @@ export default function QueueView() {
               labNumber: labToTake,
               position: positionToTake 
           });
-          setLabNum(''); // Очистити поле
+          setLabNum(''); 
           setIsJoining(false);
           fetchQueue();
       } catch (e: any) { 
@@ -109,12 +117,11 @@ export default function QueueView() {
       } catch (e) { alert('Помилка створення черги'); }
   };
 
-  const handleKick = async (targetUserId: string, name: string) => {
+  const handleKick = async (targetUserId: string) => {
     if (!queue || !tgUser) return;
-    if (confirm(`Видалити ${name} з черги?`)) {
-        await api.post('/queues/kick', { queueId: queue._id, adminTgId: tgUser.id, targetUserId });
-        fetchQueue();
-    }
+    await api.post('/queues/kick', { queueId: queue._id, adminTgId: tgUser.id, targetUserId });
+    fetchQueue();
+    setSelectedEntry(null); 
   };
 
   const handleToggle = async () => {
@@ -123,21 +130,48 @@ export default function QueueView() {
      fetchQueue();
   };
 
+  const handleChangeStatus = async (targetUserId: string, newStatus: string) => {
+      if (!queue) return;
+      try {
+        await api.patch('/queues/status', {
+            queueId: queue._id,
+            userId: targetUserId,
+            status: newStatus
+        });
+        fetchQueue();
+        setSelectedEntry(null);
+      } catch (e) {
+          console.error(e);
+          alert('Не вдалося змінити статус');
+      }
+  };
+
   const getStatusColor = (status: string | undefined) => {
         switch(status) {
-            case 'defending': return 'border-green-500 bg-green-50 ring-1 ring-green-200';
-            case 'preparing': return 'border-yellow-400 bg-yellow-50 ring-1 ring-yellow-200';
+            case 'defending': return 'border-green-500 bg-green-50 ring-2 ring-green-200';
+            case 'preparing': return 'border-yellow-400 bg-yellow-50 ring-2 ring-yellow-200';
+            case 'completed': return 'border-blue-500 bg-blue-50 opacity-60';
             case 'failed': return 'border-red-500 bg-red-50';
+            case 'skipped': return 'border-gray-400 bg-gray-100 opacity-50';
             case 'waiting': return 'border-blue-200 bg-white';
-            default: return 'border-gray-200 bg-gray-50'; // Порожнє місце
+            default: return 'border-gray-200 bg-gray-50';
         }
+  };
+
+  const getStatusIcon = (status: string | undefined) => {
+      switch(status) {
+          case 'defending': return <Play size={12} className="text-green-600 animate-pulse" fill="currentColor"/>;
+          case 'preparing': return <Clock size={12} className="text-yellow-600"/>;
+          case 'completed': return <CheckCircle size={12} className="text-blue-600"/>;
+          case 'failed': return <AlertOctagon size={12} className="text-red-600"/>;
+          default: return null;
+      }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-500">Завантаження...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-       {/* Хедер */}
+    <div className="min-h-screen bg-gray-50 flex flex-col relative">
        <div className="bg-white p-4 shadow-sm flex items-center justify-between sticky top-0 z-10">
          <div className="flex items-center gap-3">
             <button onClick={() => navigate(-1)} className="p-2 text-gray-600 active:bg-gray-100 rounded-full transition"><ArrowLeft /></button>
@@ -162,15 +196,11 @@ export default function QueueView() {
          </div>
        </div>
 
-       {/* Основна частина */}
        <div className="flex-1 p-3 overflow-y-auto">
           {!queue ? (
               <div className="text-center mt-20">
                   <p className="text-gray-400 mb-4">Чергу ще не створено</p>
-                  <button 
-                    onClick={handleCreateQueue}
-                    className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto shadow-lg shadow-blue-200 active:scale-95 transition"
-                  >
+                  <button onClick={handleCreateQueue} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto shadow-lg shadow-blue-200 active:scale-95 transition">
                     <Play size={20} /> Відкрити чергу
                   </button>
               </div>
@@ -181,13 +211,11 @@ export default function QueueView() {
                     <span className="text-xs font-normal text-gray-400">Всього: {MAX_SLOTS}</span>
                 </h3>
                       
-                {/* Сітка 3 колонки */}
                 <div className="grid grid-cols-3 gap-2">
                     {Array.from({ length: MAX_SLOTS }, (_, i) => i + 1).map((slotNumber) => {
                       const entry = queue.entries?.find(e => e.position === slotNumber);
                       const isMyEntry = entry?.user?.telegramId === tgUser?.id;
                       
-                      // Статус для кольору картки
                       const statusClass = entry ? getStatusColor(entry.status) : 'border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50 cursor-pointer';
                       const activeClass = isMyEntry ? 'ring-2 ring-blue-500 shadow-md transform scale-[1.02]' : '';
 
@@ -198,16 +226,17 @@ export default function QueueView() {
                             relative p-2 rounded-xl border-2 text-center min-h-[110px] flex flex-col items-center justify-center transition-all duration-200
                             ${statusClass} ${activeClass}
                           `}
-                          onClick={() => !entry && handleJoin(slotNumber)}
+                          onClick={() => {
+                              if (!entry) handleJoin(slotNumber);
+                              else if (entry.user) setSelectedEntry(entry); // Відкрити меню управління
+                          }}
                         >
-                          {/* Номер місця */}
                           <span className={`absolute top-1 left-2 text-[10px] font-bold ${entry ? 'text-gray-500' : 'text-gray-300'}`}>
                               #{slotNumber}
                           </span>
                             
                           {entry ? (
                             <>
-                              {/* Аватарка */}
                               <div className="w-10 h-10 rounded-full bg-gray-200 mb-1 overflow-hidden shadow-sm border border-white">
                                   {entry.user?.username ? (
                                       <img 
@@ -223,42 +252,18 @@ export default function QueueView() {
                                   )}
                               </div>
 
-                              {/* Ім'я */}
                               <span className="text-[11px] font-bold text-gray-800 leading-tight line-clamp-2 h-7 flex items-center justify-center">
                                 {entry.user?.fullName || 'Студент'}
                               </span>
 
-                              {/* Лаба і статус */}
                               <div className="flex items-center gap-1 mt-1">
                                   <span className="text-[10px] bg-white/80 px-1.5 py-0.5 rounded text-gray-600 font-medium border border-gray-100">
                                       Лаб {entry.labNumber}
                                   </span>
-                                  {entry.status === 'defending' && <Play size={12} className="text-green-600" fill="currentColor"/>}
-                                  {entry.status === 'preparing' && <Clock size={12} className="text-yellow-600"/>}
+                                  {getStatusIcon(entry.status)}
                               </div>
-
-                              {/* Кнопка виходу (своя) */}
-                              {isMyEntry && (
-                                 <button onClick={(e) => { e.stopPropagation(); handleLeave(); }} className="text-red-500 bg-white rounded-full p-0.5 shadow-sm absolute -top-1.5 -right-1.5 z-10">
-                                   <XCircle size={16} fill="white"/>
-                                 </button>
-                              )}
-
-                              {/* Кнопка кіку (для адмінів - логіку відображення можна додати пізніше, зараз показуємо всім чужим) */}
-                              {!isMyEntry && entry.user && (
-                                <button 
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    if(entry.user) handleKick(entry.user._id, entry.user.fullName); 
-                                  }} 
-                                  className="text-gray-300 hover:text-red-500 absolute top-1 right-1 transition-colors"
-                                >
-                                   <Trash2 size={12} />
-                                </button>
-                              )}
                             </>
                           ) : (
-                            // Порожній слот
                             <div className="flex flex-col items-center opacity-50">
                                 <span className="text-blue-500 font-bold text-xl mb-[-4px]">+</span>
                                 <span className="text-[9px] text-gray-400">Вільно</span>
@@ -272,7 +277,7 @@ export default function QueueView() {
           )}
        </div>
 
-       {/* Нижнє меню дій */}
+       {/* Нижнє меню дій (додав min={1} в інпут) */}
        {queue && (
            <div className="p-4 bg-white border-t sticky bottom-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
                {!queue.isActive && !myEntry ? (
@@ -295,7 +300,9 @@ export default function QueueView() {
                ) : isJoining ? (
                    <div className="flex gap-2 animate-in slide-in-from-bottom duration-300">
                        <input 
-                          type="number" placeholder="№ лаби"
+                          type="number" 
+                          min="1" // ВАЛІДАЦІЯ ТУТ
+                          placeholder="№ лаби"
                           className="w-24 p-3 bg-gray-100 rounded-xl text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 text-lg"
                           value={labNum} onChange={e => setLabNum(e.target.value)} autoFocus
                        />
@@ -315,6 +322,50 @@ export default function QueueView() {
                       <UserCheck size={24} /> Записатися в чергу
                    </button>
                )}
+           </div>
+       )}
+
+       {/* === MODAL FOR STATUS MANAGEMENT === */}
+       {selectedEntry && selectedEntry.user && (
+           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedEntry(null)}>
+               <div className="bg-white rounded-2xl w-full max-w-xs p-4 shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                   <div className="text-center mb-4">
+                       <div className="w-16 h-16 rounded-full bg-gray-200 mx-auto mb-2 overflow-hidden">
+                            {/* Тут можна продублювати аватарку */}
+                            <div className="w-full h-full flex items-center justify-center font-bold text-xl text-gray-500">{selectedEntry.user.fullName[0]}</div>
+                       </div>
+                       <h3 className="font-bold text-lg">{selectedEntry.user.fullName}</h3>
+                       <p className="text-sm text-gray-500">Лабораторна робота №{selectedEntry.labNumber}</p>
+                   </div>
+
+                   <div className="grid grid-cols-2 gap-2 mb-4">
+                       <button onClick={() => handleChangeStatus(selectedEntry.user!._id, 'preparing')} className="p-3 rounded-xl bg-yellow-50 text-yellow-700 font-bold border border-yellow-200 flex flex-col items-center gap-1 hover:bg-yellow-100">
+                           <Clock size={20}/> Готується
+                       </button>
+                       <button onClick={() => handleChangeStatus(selectedEntry.user!._id, 'defending')} className="p-3 rounded-xl bg-green-50 text-green-700 font-bold border border-green-200 flex flex-col items-center gap-1 hover:bg-green-100">
+                           <Play size={20}/> Здає
+                       </button>
+                       <button onClick={() => handleChangeStatus(selectedEntry.user!._id, 'completed')} className="p-3 rounded-xl bg-blue-50 text-blue-700 font-bold border border-blue-200 flex flex-col items-center gap-1 hover:bg-blue-100">
+                           <CheckCircle size={20}/> Здав
+                       </button>
+                       <button onClick={() => handleChangeStatus(selectedEntry.user!._id, 'failed')} className="p-3 rounded-xl bg-red-50 text-red-700 font-bold border border-red-200 flex flex-col items-center gap-1 hover:bg-red-100">
+                           <AlertOctagon size={20}/> Не здав
+                       </button>
+                       <button onClick={() => handleChangeStatus(selectedEntry.user!._id, 'waiting')} className="col-span-2 p-2 rounded-xl bg-gray-50 text-gray-600 text-sm font-medium border border-gray-200">
+                           Скинути статус (В чергу)
+                       </button>
+                   </div>
+                   
+                   <div className="border-t pt-3 flex justify-between items-center">
+                       <button 
+                         onClick={() => handleKick(selectedEntry.user!._id)}
+                         className="text-red-500 flex items-center gap-2 p-2 rounded-lg hover:bg-red-50 transition"
+                       >
+                           <Trash2 size={18} /> Видалити
+                       </button>
+                       <button onClick={() => setSelectedEntry(null)} className="text-gray-400 p-2">Закрити</button>
+                   </div>
+               </div>
            </div>
        )}
     </div>
