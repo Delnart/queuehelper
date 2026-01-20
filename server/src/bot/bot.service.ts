@@ -76,12 +76,12 @@ export class BotService implements OnModuleInit {
 
         await this.groupsService.addMember(ctx.chat.id, id);
         
-        const directLink = `https://t.me/@queuekpihelper_bot/queue?startapp=group_${ctx.chat.id}`;
-        const keyboard = new InlineKeyboard().url("📱 Відкрити чергу", directLink);
+        const keyboard = new InlineKeyboard().webApp("📱 Відкрити чергу", webAppUrl);
+
         await ctx.reply(`👋 ${first_name}, ти успішно доданий до системи групи!`, {
             reply_markup: keyboard
         });
- 
+
       } catch (e) {
         console.error(e);
         await ctx.reply('❌ Група ще не зареєстрована. Староста має написати /register');

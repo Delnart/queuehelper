@@ -87,7 +87,7 @@ export class GroupsService {
 
 
   async createGroupFromChat(chatId: number, title: string, ownerTgId: number) {
-    const existingGroup = await this.groupModel.findOne({ telegramChatId: chatId });
+    const existingGroup = await this.groupModel.findOne({ telegramId: chatId });
     if (existingGroup) {
       throw new BadRequestException('Група вже зареєстрована!');
     }
